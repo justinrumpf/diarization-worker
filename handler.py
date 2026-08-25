@@ -4,6 +4,11 @@ Same model stack as examples/speech-diarization (faster-whisper large-v3 +
 pyannote speaker-diarization-3.1), repackaged as a serverless worker so the
 zendesk-hud app can spin it up on demand and let it scale back to zero.
 
+The heavy ML imports (torch / faster_whisper / pyannote / av / numpy / requests)
+are LAZY — done inside the functions, not at module top — so RunPod's handler
+detector (which imports this file to find ``runpod.serverless.start``) can import it
+in a bare environment. The models still load on the first job inside the container.
+
 Input (event["input"]):
   {"url": "<audio url>", "headers": {"Authorization": "Bearer …"}}   # RingCentral
   {"base64": "<b64 audio>", "format": "mp3"}                          # inline
@@ -21,13 +26,7 @@ import os
 import tempfile
 from pathlib import Path
 
-import av
-import numpy as np
-import requests
 import runpod
-import torch
-from faster_whisper import WhisperModel
-from pyannote.audio import Pipeline as DiarizationPipeline
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3")
 DEVICE = os.environ.get("DEVICE", "cuda")
@@ -41,6 +40,7 @@ _diar = None
 def get_whisper():
     global _whisper
     if _whisper is None:
+        from faster_whisper import WhisperModel
         _whisper = WhisperModel(WHISPER_MODEL, device=DEVICE, compute_type=COMPUTE_TYPE)
     return _whisper
 
@@ -51,6 +51,8 @@ def get_diar():
         if not HF_TOKEN:
             raise RuntimeError("HF_TOKEN required for pyannote; accept terms at "
                                "huggingface.co/pyannote/speaker-diarization-3.1")
+        import torch
+        from pyannote.audio import Pipeline as DiarizationPipeline
         _diar = DiarizationPipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1", use_auth_token=HF_TOKEN)
         if DEVICE == "cuda":
@@ -59,6 +61,9 @@ def get_diar():
 
 
 def _load_audio(path):
+    import av
+    import numpy as np
+    import torch
     container = av.open(path)
     stream = container.streams.audio[0]
     sr = stream.rate or stream.codec_context.sample_rate
@@ -74,6 +79,7 @@ def _load_audio(path):
 def _resolve_audio(data):
     """Return (path, is_temp). Supports url (+optional headers) / base64 / file_path."""
     if "url" in data:
+        import requests
         headers = data.get("headers") or {}
         resp = requests.get(data["url"], headers=headers, timeout=300, stream=True)
         resp.raise_for_status()
@@ -103,7 +109,6 @@ def _turns(segments, diarization):
     if not words:   # no word timestamps → segment-level
         out = []
         for seg in segments:
-            mid = (seg.start + seg.end) / 2
             best, bov = "UNKNOWN", 0.0
             for turn, _, spk in diarization.itertracks(yield_label=True):
                 ov = max(0.0, min(seg.end, turn.end) - max(seg.start, turn.start))
