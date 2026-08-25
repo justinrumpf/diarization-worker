@@ -13,12 +13,24 @@ WORKDIR /app
 RUN pip install --no-cache-dir torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
     --index-url https://download.pytorch.org/whl/cu124
 
-# 2. Worker deps.
+# 2. Worker deps. (pyannote's chain — speechbrain / pytorch-metric-learning /
+#    lightning — can pull a mismatched torch/torchvision from PyPI over the cu124
+#    pins above, which is what causes "torchvision has no attribute 'extension'".)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt --ignore-installed blinker
 
-# 3. pyannote 3.x needs use_auth_token support; restore cuDNN for CUDA 12.4.
-RUN pip install --no-cache-dir "huggingface_hub<0.24.0" nvidia-cudnn-cu12==9.1.0.70
+# 3. pyannote 3.x needs use_auth_token support.
+RUN pip install --no-cache-dir "huggingface_hub<0.24.0"
+
+# 4. FINAL, AUTHORITATIVE torch stack: force the matched cu124 trio back with
+#    --no-deps so the dependency resolver can't touch anything else. This must win.
+RUN pip install --no-cache-dir --force-reinstall --no-deps \
+    torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
+    --index-url https://download.pytorch.org/whl/cu124
+
+# 5. Restore cuDNN for CUDA 12.4 LAST (the torch reinstall above may re-pull a
+#    different bundled cuDNN).
+RUN pip install --no-cache-dir nvidia-cudnn-cu12==9.1.0.70
 
 COPY handler.py .
 
