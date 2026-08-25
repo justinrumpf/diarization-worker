@@ -7,8 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
 
 WORKDIR /app
 
-# 1. Torch pinned to the base image's CUDA (must be first).
-RUN pip install --no-cache-dir torch==2.4.1 torchaudio==2.4.1 \
+# 1. Torch stack pinned to the base image's CUDA (must be first). torchvision is
+#    pinned to the version that matches torch 2.4.1 — pyannote pulls torchvision in,
+#    and a mismatched one causes "torchvision has no attribute 'extension'".
+RUN pip install --no-cache-dir torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
     --index-url https://download.pytorch.org/whl/cu124
 
 # 2. Worker deps.
